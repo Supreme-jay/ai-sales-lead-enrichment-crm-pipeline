@@ -1,0 +1,441 @@
+{
+  "name": "AI sales lead & CRM pipeline",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "new-lead",
+        "options": {
+          "responseCode": {
+            "values": {}
+          }
+        }
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -896,
+        32
+      ],
+      "id": "b93c4a03-2d5f-41dc-8c8f-fd9fcf2b83f7",
+      "name": "Webhook",
+      "webhookId": "fcfb174e-7eae-445a-a1cc-951602f7442c"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.groq.com/openai/v1/chat/completions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"llama-3.3-70b-versatile\",\n  \"temperature\": 0.6,\n  \"max_tokens\": 700,\n  \"messages\": [\n    {\n      \"role\": \"system\",\n      \"content\": \"You are a B2B sales intelligence analyst. Given a lead, do these 4 things:\\n1. Write a 2-sentence company summary based on their company name and role\\n2. Identify their most likely pain point based on their role\\n3. Score them: hot (decision maker + clear pain), warm (influencer or unclear pain), cold (no buying signal)\\n4. Write a personalized outreach email under 90 words signed from Alex at AutoFlow\\n\\nReturn ONLY valid JSON, no text outside it:\\n{\\n  \\\"company_summary\\\": \\\"2-sentence summary\\\",\\n  \\\"pain_point\\\": \\\"their top pain point\\\",\\n  \\\"lead_score\\\": \\\"hot or warm or cold\\\",\\n  \\\"score_reason\\\": \\\"1 sentence why\\\",\\n  \\\"outreach_email\\\": \\\"the email body\\\"\\n}\"\n    },\n    {\n      \"role\": \"user\",\n      \"content\": \"Lead details:\\nName: {{ $json.body.name }}\\nEmail: {{ $json.body.email }}\\nCompany: {{ $json.body.company }}\\nRole: {{ $json.body.role }}\\nMessage: {{ $json.body.message }}\"\n    }\n  ]\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        -672,
+        32
+      ],
+      "id": "04be82c3-a8d6-4663-8f07-925fa54da1df",
+      "name": "HTTP Request",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "0DcW89UBjD4xU1q2",
+          "name": "Header Auth account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const aiResponse = $input.first().json;\nconst rawText = aiResponse.choices[0].message.content;\n\nlet parsed;\ntry {\n  parsed = JSON.parse(rawText);\n} catch(e) {\n  const match = rawText.match(/\\{[\\s\\S]*\\}/);\n  if (!match) throw new Error('No JSON in Groq response: ' + rawText);\n  parsed = JSON.parse(match[0]);\n}\n\nconst lead = $('Webhook').first().json;\n\nreturn [{\n  json: {\n    name:            lead.name,\n    email:           lead.email,\n    company:         lead.company,\n    role:            lead.role,\n    message:         lead.message || '',\n    company_summary: parsed.company_summary || '',\n    pain_point:      parsed.pain_point      || '',\n    lead_score:      parsed.lead_score      || 'cold',\n    score_reason:    parsed.score_reason    || '',\n    outreach_email:  parsed.outreach_email  || '',\n    created_at:      new Date().toISOString()\n  }\n}];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -480,
+        32
+      ],
+      "id": "af4d9991-ee52-435c-bbe5-1d062e5cb1e9",
+      "name": "Code in JavaScript"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "6c39e624-9170-489a-a8ff-b2746ca574cb",
+              "leftValue": "={{ $json.fields.Score }}",
+              "rightValue": "cold",
+              "operator": {
+                "type": "string",
+                "operation": "notEquals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -64,
+        32
+      ],
+      "id": "3344be9d-2361-4387-a39e-e55d62e3c028",
+      "name": "If"
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $json.fields.Email }}",
+        "subject": "=Quick thought for {{ $json.fields.Company }}",
+        "emailType": "text",
+        "message": "={{ $json.fields.EmailSent }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        272,
+        -80
+      ],
+      "id": "ef7d008d-7942-46fe-84ca-060aeb292f51",
+      "name": "Send a message",
+      "webhookId": "76ebea07-36b8-4fa3-8144-8aa70b653049",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "mGRlfUTH4l1NC5jY",
+          "name": "Gmail account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "value": "sales-leads",
+          "mode": "name"
+        },
+        "text": "=COLD LEAD — Manual Review Needed  Name: {{ $json.name }} Company: {{ $json.company }} Role: {{ $json.role }} Reason: {{ $json.score_reason }}  No email sent. Review and decide whether to outreach manually",
+        "otherOptions": {}
+      },
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.4,
+      "position": [
+        256,
+        128
+      ],
+      "id": "b606e301-c0a7-400b-b9a3-952bc8291187",
+      "name": "Send a message1",
+      "webhookId": "19a101f4-4068-42b6-a384-6589bdfc14af",
+      "credentials": {
+        "slackApi": {
+          "id": "jBMr2NTt68t5utLO",
+          "name": "Slack account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "value": "sales-leads",
+          "mode": "name"
+        },
+        "text": "=New QUALIFIED lead — Score: {{ $('If').item.json.fields.Score.toUpperCase() }}  Name: {{ $('If').item.json.fields.Name }} Company: {{ $('If').item.json.fields.Company }} Role: {{ $('If').item.json.fields.Role }} Pain Point: {{ $('If').item.json.fields.PainPoint }} Why this score:  {{ $('If').item.json.fields.Summary }} Outreach email has been sent automatically.",
+        "otherOptions": {}
+      },
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.4,
+      "position": [
+        480,
+        -80
+      ],
+      "id": "9efc2f93-cf59-4607-b8fa-dcce1494a1d4",
+      "name": "Send a message2",
+      "webhookId": "ac6a7a34-3f2f-48c1-86ae-3c0523dc6069",
+      "credentials": {
+        "slackApi": {
+          "id": "jBMr2NTt68t5utLO",
+          "name": "Slack account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "{\n  \"status\": \"success\",\n  \"lead_score\": \"{{$json.lead_score}}\"\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        672,
+        -80
+      ],
+      "id": "cc46353a-0ce2-4110-879a-adc0bf32b693",
+      "name": "Respond to Webhook"
+    },
+    {
+      "parameters": {
+        "operation": "create",
+        "base": {
+          "__rl": true,
+          "value": "appcxDU8xGSVGEKx9",
+          "mode": "list",
+          "cachedResultName": "Sales CRM",
+          "cachedResultUrl": "https://airtable.com/appcxDU8xGSVGEKx9"
+        },
+        "table": {
+          "__rl": true,
+          "value": "tbl0V8rVNt11dWHcU",
+          "mode": "list",
+          "cachedResultName": "Leads",
+          "cachedResultUrl": "https://airtable.com/appcxDU8xGSVGEKx9/tbl0V8rVNt11dWHcU"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Name": "={{ $('Webhook').item.json.body.name }}",
+            "Email": "={{ $('Webhook').item.json.body.email }}",
+            "Company": "={{ $('Webhook').item.json.body.company }}",
+            "Role": "={{ $('Webhook').item.json.body.role }}",
+            "Score": "={{ $json.lead_score }}",
+            "Summary": "={{ $json.company_summary }}",
+            "PainPoint": "={{ $json.pain_point }}",
+            "EmailSent": "={{ $json.outreach_email }}",
+            "CreatedAt": "={{ $json.created_at }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "Name",
+              "displayName": "Name",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "Email",
+              "displayName": "Email",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "Company",
+              "displayName": "Company",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "Role",
+              "displayName": "Role",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "Score",
+              "displayName": "Score",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "Summary",
+              "displayName": "Summary",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "PainPoint",
+              "displayName": "PainPoint",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "EmailSent",
+              "displayName": "EmailSent",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "CreatedAt",
+              "displayName": "CreatedAt",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.airtable",
+      "typeVersion": 2.1,
+      "position": [
+        -272,
+        32
+      ],
+      "id": "b56d639b-a6ac-4b1b-abd9-69a9ba85d617",
+      "name": "Create a record",
+      "credentials": {
+        "airtableTokenApi": {
+          "id": "dXCdQFhiS8XBicLs",
+          "name": "Airtable Personal Access Token account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "Create a record",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If": {
+      "main": [
+        [
+          {
+            "node": "Send a message",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send a message1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send a message": {
+      "main": [
+        [
+          {
+            "node": "Send a message2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send a message2": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create a record": {
+      "main": [
+        [
+          {
+            "node": "If",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": false
+  },
+  "versionId": "217c7d9f-e24f-4043-a528-f93c259d0ce5",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "d361637f1d70339ec01cb1a27fd403eac27fb61b561b025cd2a653356b47936c"
+  },
+  "id": "fDvMq_iW1WP-fJouYao6_",
+  "tags": []
+}
